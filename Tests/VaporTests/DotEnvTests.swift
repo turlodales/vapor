@@ -1,5 +1,8 @@
 @testable import Vapor
 import XCTVapor
+import XCTest
+import NIOPosix
+import NIOCore
 
 final class DotEnvTests: XCTestCase {
     func testReadFile() throws {
@@ -7,7 +10,7 @@ final class DotEnvTests: XCTestCase {
         let pool = NIOThreadPool(numberOfThreads: 1)
         pool.start()
         let fileio = NonBlockingFileIO(threadPool: pool)
-        let folder = #file.split(separator: "/").dropLast().joined(separator: "/")
+        let folder = #filePath.split(separator: "/").dropLast().joined(separator: "/")
         let path = "/" + folder + "/Utilities/test.env"
         let file = try DotEnvFile.read(path: path, fileio: fileio, on: elg.next()).wait()
         let test = file.lines.map { $0.description }.joined(separator: "\n")

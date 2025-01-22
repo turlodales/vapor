@@ -1,6 +1,8 @@
-import NIO
+import NIOCore
+import NIOHTTP1
+import Foundation
 
-public struct ClientResponse {
+public struct ClientResponse: Sendable {
     public var status: HTTPStatus
     public var headers: HTTPHeaders
     public var body: ByteBuffer?

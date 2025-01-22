@@ -1,7 +1,5 @@
-/**
- We recommend configuring this in your test’s `class func setUp()`
- */
-public var app: (() throws -> Application)!
+import Vapor
+import XCTest
 
 open class XCTVaporTests: XCTestCase {
     open var app: Application!

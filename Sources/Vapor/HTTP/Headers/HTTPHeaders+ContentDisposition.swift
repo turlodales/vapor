@@ -1,3 +1,5 @@
+import NIOHTTP1
+
 extension HTTPHeaders {
     /// Convenience for accessing the Content-Disposition header.
     ///
@@ -18,7 +20,7 @@ extension HTTPHeaders {
     }
 
     public struct ContentDisposition {
-        public struct Value: Equatable {
+        public struct Value: Equatable, Sendable {
             public static let inline = Value(string: "inline")
             public static let attachment = Value(string: "attachment")
             public static let formData = Value(string: "form-data")

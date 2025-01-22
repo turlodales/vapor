@@ -1,4 +1,9 @@
+import Foundation
 import Metrics
+@preconcurrency import RoutingKit
+import NIOCore
+import NIOHTTP1
+import Logging
 
 /// Vapor's main `Responder` type. Combines configured middleware + router to create a responder.
 internal struct DefaultResponder: Responder {
@@ -23,6 +28,7 @@ internal struct DefaultResponder: Responder {
                 route: route,
                 responder: middleware.makeResponder(chainingTo: route.responder)
             )
+            
             // remove any empty path components
             let path = route.path.filter { component in
                 switch component {
@@ -33,27 +39,7 @@ internal struct DefaultResponder: Responder {
                 }
             }
             
-            // If the route isn't explicitly a HEAD route,
-            // and it's made up solely of .constant components,
-            // register a HEAD route with the same path
-            if route.method == .GET &&
-                route.path.allSatisfy({ component in
-                    if case .constant(_) = component { return true }
-                    return false
-            }) {
-                let headRoute = Route(
-                    method: .HEAD,
-                    path: cached.route.path,
-                    responder: middleware.makeResponder(chainingTo: HeadResponder()),
-                    requestType: cached.route.requestType,
-                    responseType: cached.route.responseType)
-
-                let headCachedRoute = CachedRoute(route: headRoute, responder: middleware.makeResponder(chainingTo: HeadResponder()))
-
-                router.register(headCachedRoute, at: [.constant(HTTPMethod.HEAD.string)] + path)
-            }
-            
-            router.register(cached, at: [.constant(route.method.string)] + path)
+            router.register(cached, at: [.constant(route.method.rawValue)] + path)
         }
         self.router = router
         self.notFoundResponder = middleware.makeResponder(chainingTo: NotFoundResponder())
@@ -96,7 +82,7 @@ internal struct DefaultResponder: Responder {
         
         // If it's a HEAD request and a HEAD route exists, return that route...
         if request.method == .HEAD, let route = self.router.route(
-            path: [HTTPMethod.HEAD.string] + pathComponents,
+            path: [HTTPMethod.HEAD.rawValue] + pathComponents,
             parameters: &request.parameters
         ) {
             return route
@@ -106,7 +92,7 @@ internal struct DefaultResponder: Responder {
         let method = (request.method == .HEAD) ? .GET : request.method
         
         return self.router.route(
-            path: [method.string] + pathComponents,
+            path: [method.rawValue] + pathComponents,
             parameters: &request.parameters
         )
     }
@@ -122,7 +108,7 @@ internal struct DefaultResponder: Responder {
         if let route = request.route {
             // We don't use route.description here to avoid duplicating the method in the path
             pathForMetrics = "/\(route.path.map { "\($0)" }.joined(separator: "/"))"
-            methodForMetrics = request.method.string
+            methodForMetrics = request.method.rawValue
         } else {
             // If the route is undefined (i.e. a 404 and not something like /users/:userID
             // We rewrite the path and the method to undefined to avoid DOSing the
@@ -149,25 +135,13 @@ internal struct DefaultResponder: Responder {
     }
 }
 
-private struct HeadResponder: Responder {
-    func respond(to request: Request) -> EventLoopFuture<Response> {
-        request.eventLoop.makeSucceededFuture(.init(status: .ok))
-    }
-}
-
 private struct NotFoundResponder: Responder {
     func respond(to request: Request) -> EventLoopFuture<Response> {
         request.eventLoop.makeFailedFuture(RouteNotFound())
     }
 }
 
-struct RouteNotFound: Error {
-    let stackTrace: StackTrace?
-
-    init() {
-        self.stackTrace = StackTrace.capture(skip: 1)
-    }
-}
+struct RouteNotFound: Error {}
 
 extension RouteNotFound: AbortError {    
     var status: HTTPResponseStatus {

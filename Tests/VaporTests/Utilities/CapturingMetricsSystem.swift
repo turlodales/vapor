@@ -20,60 +20,64 @@ import NIOConcurrencyHelpers
 
 /// Metrics factory which allows inspecting recorded metrics programmatically.
 /// Only intended for tests of the Metrics API itself.
-internal final class CapturingMetricsSystem: MetricsFactory {
-    private let lock = Lock()
+internal final class CapturingMetricsSystem: MetricsFactory, @unchecked Sendable {
+    private let lock = NIOLock()
     var counters = [String: CounterHandler]()
     var recorders = [String: RecorderHandler]()
     var timers = [String: TimerHandler]()
 
     public func makeCounter(label: String, dimensions: [(String, String)]) -> CounterHandler {
-        return self.make(label: label, dimensions: dimensions, registry: &self.counters, maker: TestCounter.init)
+        return self.lock.withLock { self.make(label: label, dimensions: dimensions, registry: &self.counters, maker: TestCounter.init) }
     }
 
     public func makeRecorder(label: String, dimensions: [(String, String)], aggregate: Bool) -> RecorderHandler {
         let maker = { (label: String, dimensions: [(String, String)]) -> RecorderHandler in
             TestRecorder(label: label, dimensions: dimensions, aggregate: aggregate)
         }
-        return self.make(label: label, dimensions: dimensions, registry: &self.recorders, maker: maker)
+        return self.lock.withLock { self.make(label: label, dimensions: dimensions, registry: &self.recorders, maker: maker) }
     }
 
     public func makeTimer(label: String, dimensions: [(String, String)]) -> TimerHandler {
-        return self.make(label: label, dimensions: dimensions, registry: &self.timers, maker: TestTimer.init)
+        return self.lock.withLock { self.make(label: label, dimensions: dimensions, registry: &self.timers, maker: TestTimer.init) }
     }
 
     private func make<Item>(label: String, dimensions: [(String, String)], registry: inout [String: Item], maker: (String, [(String, String)]) -> Item) -> Item {
-        return self.lock.withLock {
-            let item = maker(label, dimensions)
-            registry[label] = item
-            return item
-        }
+        let item = maker(label, dimensions)
+        registry[label] = item
+        return item
     }
 
     func destroyCounter(_ handler: CounterHandler) {
         if let testCounter = handler as? TestCounter {
-            self.counters.removeValue(forKey: testCounter.label)
+            self.lock.withLockVoid {
+                self.counters.removeValue(forKey: testCounter.label)
+            }
         }
     }
 
     func destroyRecorder(_ handler: RecorderHandler) {
         if let testRecorder = handler as? TestRecorder {
-            self.recorders.removeValue(forKey: testRecorder.label)
+            self.lock.withLockVoid {
+                self.recorders.removeValue(forKey: testRecorder.label)
+            }
         }
     }
 
     func destroyTimer(_ handler: TimerHandler) {
         if let testTimer = handler as? TestTimer {
-            self.timers.removeValue(forKey: testTimer.label)
+            self.lock.withLockVoid {
+                self.timers.removeValue(forKey: testTimer.label)
+            }
         }
     }
 }
 
-internal class TestCounter: CounterHandler, Equatable {
+internal final class TestCounter: CounterHandler, Equatable, @unchecked Sendable {
     let id: String
     let label: String
     let dimensions: [(String, String)]
 
-    let lock = Lock()
+    let lock = NIOLock()
     var values = [(Date, Int64)]()
 
     init(label: String, dimensions: [(String, String)]) {
@@ -86,14 +90,12 @@ internal class TestCounter: CounterHandler, Equatable {
         self.lock.withLock {
             self.values.append((Date(), amount))
         }
-        print("adding \(amount) to \(self.label)")
     }
 
     func reset() {
         self.lock.withLock {
             self.values = []
         }
-        print("resetting \(self.label)")
     }
 
     public static func == (lhs: TestCounter, rhs: TestCounter) -> Bool {
@@ -101,13 +103,13 @@ internal class TestCounter: CounterHandler, Equatable {
     }
 }
 
-internal class TestRecorder: RecorderHandler, Equatable {
+internal final class TestRecorder: RecorderHandler, Equatable, @unchecked Sendable {
     let id: String
     let label: String
     let dimensions: [(String, String)]
     let aggregate: Bool
 
-    let lock = Lock()
+    let lock = NIOLock()
     var values = [(Date, Double)]()
 
     init(label: String, dimensions: [(String, String)], aggregate: Bool) {
@@ -125,7 +127,6 @@ internal class TestRecorder: RecorderHandler, Equatable {
         self.lock.withLock {
             values.append((Date(), value))
         }
-        print("recording \(value) in \(self.label)")
     }
 
     public static func == (lhs: TestRecorder, rhs: TestRecorder) -> Bool {
@@ -133,13 +134,13 @@ internal class TestRecorder: RecorderHandler, Equatable {
     }
 }
 
-internal class TestTimer: TimerHandler, Equatable {
+internal final class TestTimer: TimerHandler, Equatable, @unchecked Sendable {
     let id: String
     let label: String
     var displayUnit: TimeUnit?
     let dimensions: [(String, String)]
 
-    let lock = Lock()
+    let lock = NIOLock()
     var values = [(Date, Int64)]()
 
     init(label: String, dimensions: [(String, String)]) {
@@ -155,7 +156,7 @@ internal class TestTimer: TimerHandler, Equatable {
         }
     }
 
-    func retriveValueInPreferredUnit(atIndex i: Int) -> Double {
+    func retrieveValueInPreferredUnit(atIndex i: Int) -> Double {
         return self.lock.withLock {
             let value = values[i].1
             guard let displayUnit = self.displayUnit else {
@@ -169,7 +170,6 @@ internal class TestTimer: TimerHandler, Equatable {
         self.lock.withLock {
             values.append((Date(), duration))
         }
-        print("recording \(duration) \(self.label)")
     }
 
     public static func == (lhs: TestTimer, rhs: TestTimer) -> Bool {

@@ -1,20 +1,22 @@
+import NIOConcurrencyHelpers
+
 extension Application {
     public var servers: Servers {
         .init(application: self)
     }
 
     public var server: Server {
-        guard let makeServer = self.servers.storage.makeServer else {
+        guard let makeServer = self.servers.storage.makeServer.withLockedValue({ $0.factory }) else {
             fatalError("No server configured. Configure with app.servers.use(...)")
         }
         return makeServer(self)
     }
 
-    public struct Servers {
+    public struct Servers: Sendable {
         public struct Provider {
-            let run: (Application) -> ()
+            let run: @Sendable (Application) -> ()
 
-            public init(_ run: @escaping (Application) -> ()) {
+            @preconcurrency public init(_ run: @Sendable @escaping (Application) -> ()) {
                 self.run = run
             }
         }
@@ -23,9 +25,14 @@ extension Application {
             typealias Value = ServeCommand
         }
 
-        final class Storage {
-            var makeServer: ((Application) -> Server)?
-            init() { }
+        final class Storage: Sendable {
+            struct ServerFactory {
+                let factory: (@Sendable (Application) -> Server)?
+            }
+            let makeServer: NIOLockedValueBox<ServerFactory>
+            init() {
+                self.makeServer = .init(.init(factory: nil))
+            }
         }
 
         struct Key: StorageKey {
@@ -40,10 +47,11 @@ extension Application {
             provider.run(self.application)
         }
 
-        public func use(_ makeServer: @escaping (Application) -> (Server)) {
-            self.storage.makeServer = makeServer
+        @preconcurrency public func use(_ makeServer: @Sendable @escaping (Application) -> (Server)) {
+            self.storage.makeServer.withLockedValue { $0 = .init(factory: makeServer) }
         }
 
+        @available(*, noasync, renamed: "asyncCommand", message: "Use the async property instead.")
         public var command: ServeCommand {
             if let existing = self.application.storage.get(CommandKey.self) {
                 return existing
@@ -53,6 +61,20 @@ extension Application {
                     $0.shutdown()
                 }
                 return new
+            }
+        }
+        
+        public var asyncCommand: ServeCommand {
+            get async {
+                if let existing = self.application.storage.get(CommandKey.self) {
+                    return existing
+                } else {
+                    let new = ServeCommand()
+                    await self.application.storage.setWithAsyncShutdown(CommandKey.self, to: new) {
+                        await $0.asyncShutdown()
+                    }
+                    return new
+                }
             }
         }
 

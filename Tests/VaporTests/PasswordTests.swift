@@ -1,4 +1,7 @@
 import XCTVapor
+import XCTest
+import Vapor
+import NIOCore
 
 final class PasswordTests: XCTestCase {
     func testSyncBCryptService() throws {
@@ -82,7 +85,7 @@ final class PasswordTests: XCTestCase {
     private func assertAsyncApplicationPasswordVerifies(
         _ provider: Application.Passwords.Provider,
         on app: Application,
-        file: StaticString = #file,
+        file: StaticString = #filePath,
         line: UInt = #line
     ) throws {
         app.passwords.use(provider)
@@ -92,18 +95,18 @@ final class PasswordTests: XCTestCase {
             .hash("vapor")
             .wait()
         
-        let asyncVerifiy = try app.password
+        let asyncVerify = try app.password
             .async(on: app.threadPool, hopTo: app.eventLoopGroup.next())
             .verify("vapor", created: asyncHash)
             .wait()
         
-        XCTAssertTrue(asyncVerifiy, file: (file), line: line)
+        XCTAssertTrue(asyncVerify, file: file, line: line)
     }
     
     private func assertAsyncRequestPasswordVerifies(
         _ provider: Application.Passwords.Provider,
         on app: Application,
-        file: StaticString = #file,
+        file: StaticString = #filePath,
         line: UInt = #line
     ) throws {
         app.passwords.use(provider)
@@ -122,7 +125,7 @@ final class PasswordTests: XCTestCase {
         }
         
         try app.test(.GET, "test", afterResponse: { res in
-            XCTAssertEqual(res.body.string, "true", file: (file), line: line)
+            XCTAssertEqual(res.body.string, "true", file: file, line: line)
         })
     }
 }

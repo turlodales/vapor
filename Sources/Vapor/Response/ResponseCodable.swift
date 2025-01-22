@@ -1,3 +1,6 @@
+import NIOCore
+import NIOHTTP1
+
 /// Can convert `self` to a `Response`.
 ///
 /// Types that conform to this protocol can be returned in route closures.
@@ -46,10 +49,12 @@ extension ResponseEncodable {
     /// - returns: Newly encoded `Response`.
     public func encodeResponse(status: HTTPStatus, headers: HTTPHeaders = [:], for request: Request) -> EventLoopFuture<Response> {
         return self.encodeResponse(for: request).map { response in
-            for (name, value) in headers {
-                response.headers.replaceOrAdd(name: name, value: value)
+            response.responseBox.withLockedValue { box in
+                for (name, value) in headers {
+                    box.headers.replaceOrAdd(name: name, value: value)
+                }
+                box.status = status
             }
-            response.status = status
             return response
         }
     }
@@ -84,7 +89,9 @@ extension EventLoopFuture: ResponseEncodable where Value: ResponseEncodable {
     // See `ResponseEncodable`.
     public func encodeResponse(for request: Request) -> EventLoopFuture<Response> {
         return self.flatMap { t in
-            return t.encodeResponse(for: request)
+            return request.propagateTracingIfEnabled {
+                t.encodeResponse(for: request)
+            }
         }
     }
 }

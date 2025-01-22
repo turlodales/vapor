@@ -7,12 +7,12 @@ import Algorithms
 
 import struct Foundation.Data
 
-public struct BaseNEncoding {
+public struct BaseNEncoding: Sendable {
     /// For a given base and count, calculate the number of values needed to encode the given count of bytes.
     @inlinable
     internal static func sizeEnc(for bits: Int, count: Int) -> Int {
         let outputs = 8 >> bits.trailingZeroBitCount, inputs = bits >> bits.trailingZeroBitCount // number of output values per input bytes
-        return ((count * outputs - 1) / inputs) + 1 // Integer divsion rounding away from zero
+        return ((count * outputs - 1) / inputs) + 1 // Integer division rounding away from zero
     }
     
     /// For a given base and count, calculate the number of bytes encoded by a given count of values. Does not
@@ -53,7 +53,11 @@ public struct BaseNEncoding {
             if padding > 0 {
                 assert((1..<bits).contains(bufBits))
                 p[n] = table[(buf &<< (bits &- bufBits)) & mask]; n &+= 1
-                if let pad = pad { p.baseAddress!.advanced(by: n).assign(repeating: pad, count: padding); n &+= padding }
+                if let pad = pad {
+                    let pn = p.baseAddress!.advanced(by: n)
+                    pn.update(repeating: pad, count: padding)
+                    n &+= padding
+                }
             }
         }
     }
@@ -93,7 +97,7 @@ public struct BaseNEncoding {
     internal struct BreakLoopError: Error { @inlinable internal init() {} }
     
     // N.B.: The values used for the invalid and padding byte representations are not arbitrarily chosen; they are
-    // intended to be used in optimized versions of the algorithm to quickly distinguish the vairous cases.
+    // intended to be used in optimized versions of the algorithm to quickly distinguish the various cases.
     
     @usableFromInline
     internal static var invalidByte: UInt8 { 0b1111_1111 } // All bits set

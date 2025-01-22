@@ -1,5 +1,6 @@
 Packages
 .build
+.index-build
 .DS_Store
 *.xcodeproj
 DerivedData/
@@ -7,3 +8,10 @@ Package.resolved
 .swiftpm
 Tests/LinuxMain.swift
 .vscode
+.bash_history
+.cache/
+
+# API Docs Generation
+generate-package-api-docs.swift
+public/
+theme-settings.json
