@@ -2,14 +2,22 @@ import XCTVapor
 import Vapor
 import Metrics
 @testable import CoreMetrics
+import XCTest
 
 class MetricsTests: XCTestCase {
+    var app: Application!
+
+    override func setUp() async throws {
+        app = try await Application.make(.testing)
+    }
+
+    override func tearDown() async throws {
+        try await app.asyncShutdown()
+    }
+
     func testMetricsIncreasesCounter() {
         let metrics = CapturingMetricsSystem()
         MetricsSystem.bootstrapInternal(metrics)
-
-        let app = Application(.testing)
-        defer { app.shutdown() }
 
         struct User: Content {
             let id: Int
@@ -31,7 +39,6 @@ class MetricsTests: XCTestCase {
             XCTAssertEqual(resData.id, 1)
             XCTAssertEqual(metrics.counters.count, 1)
             let counter = metrics.counters["http_requests_total"] as! TestCounter
-            print(counter.dimensions)
             let pathDimension = try XCTUnwrap(counter.dimensions.first(where: { $0.0 == "path"}))
             XCTAssertEqual(pathDimension.1, "/users/:userID")
             XCTAssertNil(counter.dimensions.first(where: { $0.0 == "path" && $0.1 == "/users/1" }))
@@ -53,9 +60,6 @@ class MetricsTests: XCTestCase {
     func testID404DoesntSpamMetrics() {
         let metrics = CapturingMetricsSystem()
         MetricsSystem.bootstrapInternal(metrics)
-
-        let app = Application(.testing)
-        defer { app.shutdown() }
 
         struct User: Content {
             let id: Int
@@ -98,9 +102,6 @@ class MetricsTests: XCTestCase {
         let metrics = CapturingMetricsSystem()
         MetricsSystem.bootstrapInternal(metrics)
 
-        let app = Application(.testing)
-        defer { app.shutdown() }
-
         XCTAssertNoThrow(try app.testable().test(.GET, "/not/found") { res in
             XCTAssertEqual(res.status, .notFound)
             XCTAssertEqual(metrics.counters.count, 1)
@@ -127,9 +128,7 @@ class MetricsTests: XCTestCase {
         let metrics = CapturingMetricsSystem()
         MetricsSystem.bootstrapInternal(metrics)
 
-        let app = Application(.testing)
         app.http.server.configuration.reportMetrics = false
-        defer { app.shutdown() }
 
         struct User: Content {
             let id: Int

@@ -1,9 +1,19 @@
 import XCTest
 import Vapor
+import Logging
 
 final class ErrorTests: XCTestCase {
+    var app: Application!
+
+    override func setUp() async throws {
+        app = try await Application.make(.testing)
+    }
+
+    override func tearDown() async throws {
+        try await app.asyncShutdown()
+    }
+
     func testPrintable() throws {
-        print(FooError.noFoo.debugDescription)
         let expectedPrintable = """
         FooError.noFoo: You do not have a `foo`.
         Here are some possible causes:
@@ -66,42 +76,7 @@ final class ErrorTests: XCTestCase {
         XCTAssertEqual(description, expectation)
     }
 
-    func testErrorLogging() {
-        let logger = Logger(label: "codes.vapor.test")
-        logger.report(error: FooError.noFoo)
-    }
-
-    func testErrorLogging_stacktrace() {
-        let logger = Logger(label: "codes.vapor.test")
-
-        func foo() throws {
-            try bar()
-        }
-        func bar() throws {
-            try baz()
-        }
-        func baz() throws {
-            throw TestError(kind: .foo, reason: "Oops")
-        }
-
-        do {
-            try foo()
-        } catch {
-            logger.report(error: error)
-        }
-    }
-
-    func testStackTrace() {
-        StackTrace.isCaptureEnabled = false
-        XCTAssertNil(StackTrace.capture())
-        StackTrace.isCaptureEnabled = true
-        print(StackTrace.capture()!.description)
-    }
-
     func testAbortError() throws {
-        let app = Application(.testing)
-        defer { app.shutdown() }
-
         app.get("foo") { req -> String in
             throw Abort(.internalServerError, reason: "Foo")
         }
@@ -126,31 +101,33 @@ final class ErrorTests: XCTestCase {
             XCTAssertEqual(abort.reason, "After decode")
         })
     }
-
-    func testAbortDebuggable() throws {
-        func foo() throws {
-            try bar()
+    
+    func testErrorMiddlewareUsesContentConfiguration() throws {
+        app.get("foo") { req -> String in
+            throw Abort(.internalServerError, reason: "Foo")
         }
-        func bar() throws {
-            try baz()
+        
+        ContentConfiguration.global.use(encoder: URLEncodedFormEncoder(), for: .json)
+        
+        try app.test(.GET, "foo") { res in
+            XCTAssertEqual(res.status, HTTPStatus.internalServerError)
+            let option1 = "error=true&reason=Foo"
+            let option2 = "reason=Foo&error=true"
+            guard res.body.string == option1 || res.body.string == option2 else {
+                XCTFail("Response does not match")
+                return
+            }
         }
-        func baz() throws {
-            throw Abort(.internalServerError, reason: "Oops")
-        }
-        do {
-            try foo()
-        } catch let error as DebuggableError {
-            XCTAssertContains(error.stackTrace?.frames[0].function, "baz")
-            XCTAssertContains(error.stackTrace?.frames[1].function, "bar")
-            XCTAssertContains(error.stackTrace?.frames[2].function, "foo")
-        }
+        
+        // Clean up
+        ContentConfiguration.global.use(encoder: JSONEncoder(), for: .json)
     }
 }
 
 func XCTAssertContains(
     _ haystack: String?,
     _ needle: String,
-    file: StaticString = #file,
+    file: StaticString = #filePath,
     line: UInt = #line
 ) {
     let file = (file)
@@ -261,61 +238,6 @@ private enum FooError: String, DebuggableError {
                 "http://documentation.com/Foo",
                 "http://documentation.com/foo/noFoo"
             ]
-        }
-    }
-}
-
-private struct TestError: DebuggableError {
-    enum Kind: String {
-        case foo
-        case bar
-        case baz
-    }
-
-    var kind: Kind
-    var reason: String
-    var source: ErrorSource?
-    var stackTrace: StackTrace?
-
-    init(
-        kind: Kind,
-        reason: String,
-        file: String = #file,
-        function: String = #function,
-        line: UInt = #line,
-        column: UInt = #column,
-        stackTrace: StackTrace? = .capture()
-    ) {
-        self.kind = kind
-        self.reason = reason
-        self.source = .init(
-            file: file,
-            function: function,
-            line: line,
-            column: column
-        )
-        self.stackTrace = stackTrace
-    }
-
-    var identifier: String {
-        return kind.rawValue
-    }
-
-    var possibleCauses: [String] {
-        switch kind {
-        case .foo:
-            return ["What do you expect, you're testing errors."]
-        default:
-            return []
-        }
-    }
-
-    var suggestedFixes: [String] {
-        switch kind {
-        case .foo:
-            return ["Get a better keyboard to chair interface."]
-        default:
-            return []
         }
     }
 }

@@ -1,10 +1,24 @@
+import MultipartKit
+import NIOHTTP1
+import NIOCore
+
 extension FormDataEncoder: ContentEncoder {
-    public func encode<E>(_ encodable: E, to body: inout ByteBuffer, headers: inout HTTPHeaders) throws
-        where E: Encodable
-    {
+    public func encode<E: Encodable>(_ encodable: E, to body: inout ByteBuffer, headers: inout HTTPHeaders) throws {
+        try self.encode(encodable, to: &body, headers: &headers, userInfo: [:])
+    }
+
+    public func encode<E: Encodable>(_ encodable: E, to body: inout ByteBuffer, headers: inout HTTPHeaders, userInfo: [CodingUserInfoKey: Sendable]) throws {
         let boundary = "----vaporBoundary\(randomBoundaryData())"
-        headers.contentType = HTTPMediaType(type: "multipart", subType: "form-data", parameters: ["boundary": boundary])
-        try self.encode(encodable, boundary: boundary, into: &body)
+
+        headers.contentType = HTTPMediaType.formData(boundary: boundary)
+        if !userInfo.isEmpty {
+            var actualEncoder = self  // Changing a coder's userInfo is a thread-unsafe mutation, operate on a copy
+
+            actualEncoder.userInfo.merge(userInfo) { $1 }
+            return try actualEncoder.encode(encodable, boundary: boundary, into: &body)
+        } else {
+            return try self.encode(encodable, boundary: boundary, into: &body)
+        }
     }
 }
 

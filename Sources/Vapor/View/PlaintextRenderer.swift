@@ -1,4 +1,9 @@
-public struct PlaintextRenderer: ViewRenderer {
+import NIOCore
+import NIOPosix
+import Logging
+import _NIOFileSystem
+
+public struct PlaintextRenderer: ViewRenderer, Sendable {
     public let eventLoopGroup: EventLoopGroup
     private let fileio: NonBlockingFileIO
     private let viewsDirectory: String
@@ -8,7 +13,7 @@ public struct PlaintextRenderer: ViewRenderer {
         fileio: NonBlockingFileIO,
         viewsDirectory: String,
         logger: Logger,
-        eventLoopGroup: EventLoopGroup
+        eventLoopGroup: EventLoopGroup = MultiThreadedEventLoopGroup.singleton
     ) {
         self.fileio = fileio
         self.viewsDirectory = viewsDirectory.finished(with: "/")
@@ -33,13 +38,11 @@ public struct PlaintextRenderer: ViewRenderer {
         let path = name.hasPrefix("/")
             ? name
             : self.viewsDirectory + name
-        return self.fileio.openFile(path: path, eventLoop: eventLoop).flatMap { (handle, region) in
-            return self.fileio.read(fileRegion: region, allocator: .init(), eventLoop: eventLoop).flatMapThrowing { buffer in
-                try handle.close()
-                return buffer
+        return eventLoop.makeFutureWithTask {
+            try await FileSystem.shared.withFileHandle(forReadingAt: .init(path)) { handle in
+                let buffer = try await handle.readToEnd(maximumSizeAllowed: .megabytes(32))
+                return View(data: buffer)
             }
-        }.map { data in
-            return View(data: data)
         }
     }
 }

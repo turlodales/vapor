@@ -1,6 +1,8 @@
+import NIOHTTP1
+
 extension HTTPHeaders {
     /// Type used for the name of a HTTP header in the `HTTPHeaders` storage.
-    public struct Name: Codable, Hashable, Equatable, CustomStringConvertible {
+    public struct Name: Codable, Hashable, Equatable, CustomStringConvertible, ExpressibleByStringLiteral, Sendable {
         /// See `Hashable`
         public func hash(into hasher: inout Hasher) {
             self.lowercased.hash(into: &hasher)
@@ -419,6 +421,8 @@ extension HTTPHeaders {
         public static let xForwardedHost = Name("X-Forwarded-Host")
         /// X-Forwarded-Proto header.
         public static let xForwardedProto = Name("X-Forwarded-Proto")
+        /// X-Request-Id header.
+        public static let xRequestId = Name("X-Request-Id")
     }
     
     /// Add a header name/value pair to the block.
@@ -493,7 +497,7 @@ extension HTTPHeaders {
     }
 }
 
-extension HTTPHeaders: CustomDebugStringConvertible {
+extension NIOHTTP1.HTTPHeaders: Swift.CustomDebugStringConvertible {
     /// See `CustomDebugStringConvertible.debugDescription`
     public var debugDescription: String {
         var desc: [String] = []
@@ -504,3 +508,7 @@ extension HTTPHeaders: CustomDebugStringConvertible {
     }
 }
 
+// MARK: Internal Vapor Marker Headers
+extension HTTPHeaders.Name {
+    public static let xVaporResponseCompression = Self("X-Vapor-Response-Compression")
+}

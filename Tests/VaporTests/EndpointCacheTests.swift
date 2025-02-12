@@ -1,17 +1,45 @@
 import XCTVapor
+import XCTest
+import Vapor
+import NIOCore
+#if canImport(Android)
+import func Android.sleep
+#endif
 
 final class EndpointCacheTests: XCTestCase {
-    func testEndpointCacheNoCache() throws {
-        let app = Application(.testing)
-        defer { app.shutdown() }
 
+    var app: Application!
+
+    override func setUp() async throws {
+        app = try await Application.make(.testing)
+    }
+
+    override func tearDown() async throws {
+        try await app.asyncShutdown()
+    }
+
+    actor CurrentActor {
         var current = 0
+        
+        func increment() {
+            self.current += 1
+        }
+        
+        func getCurrent() -> Int {
+            self.current
+        }
+    }
+    
+    
+    func testEndpointCacheNoCache() throws {
+        let currentActor = CurrentActor()
         struct Test: Content {
             let number: Int
         }
 
         app.get("number") { req -> Test in
-            defer { current += 1 }
+            let current = await currentActor.getCurrent()
+            await currentActor.increment()
             return Test(number: current)
         }
 
@@ -37,10 +65,7 @@ final class EndpointCacheTests: XCTestCase {
     }
 
     func testEndpointCacheMaxAge() throws {
-        let app = Application(.testing)
-        defer { app.shutdown() }
-
-        var current = 0
+        let currentActor = CurrentActor()
         struct Test: Content {
             let number: Int
         }
@@ -48,10 +73,11 @@ final class EndpointCacheTests: XCTestCase {
         app.clients.use(.responder)
 
         app.get("number") { req -> Response in
-            defer { current += 1 }
             let res = Response()
+            let current = await currentActor.getCurrent()
             try res.content.encode(Test(number: current))
             res.headers.cacheControl = .init(maxAge: 1)
+            await currentActor.increment()
             return res
         }
 

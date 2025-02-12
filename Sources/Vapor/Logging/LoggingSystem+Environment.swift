@@ -1,11 +1,10 @@
-extension LoggingSystem {
-    public static func bootstrap(from environment: inout Environment, _ factory: (Logger.Level) -> (String) -> LogHandler) throws {
-        let level = try Logger.Level.detect(from: &environment)
+import Logging
+import ConsoleKit
 
-        // Disable stack traces if log level > trace.
-        if level > .trace {
-            StackTrace.isCaptureEnabled = false
-        }
+extension LoggingSystem {
+    @preconcurrency
+    public static func bootstrap(from environment: inout Environment, _ factory: @Sendable (Logger.Level) -> (@Sendable (String) -> LogHandler)) throws {
+        let level = try Logger.Level.detect(from: &environment)
 
         // Bootstrap logger with a factory created by the factoryfactory.
         return LoggingSystem.bootstrap(factory(level))
@@ -21,7 +20,7 @@ extension LoggingSystem {
     }
 }
 
-extension Logger.Level: LosslessStringConvertible {
+extension Logging.Logger.Level: Swift.LosslessStringConvertible {
     public init?(_ description: String) { self.init(rawValue: description.lowercased()) }
     public var description: String { self.rawValue }
 

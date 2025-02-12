@@ -1,15 +1,15 @@
 import struct Foundation.CharacterSet
 
-struct URLEncodedFormSerializer {
+struct URLEncodedFormSerializer: Sendable {
     let splitVariablesOn: Character
     let splitKeyValueOn: Character
-    
+
     /// Create a new form-urlencoded data parser.
     init(splitVariablesOn: Character = "&", splitKeyValueOn: Character = "=") {
         self.splitVariablesOn = splitVariablesOn
         self.splitKeyValueOn = splitKeyValueOn
     }
-    
+
     func serialize(_ data: URLEncodedFormData, codingPath: [CodingKey] = []) throws -> String {
         var entries: [String] = []
         let key = try codingPath.toURLEncodedKey()
@@ -21,20 +21,20 @@ struct URLEncodedFormSerializer {
             }
         }
         for (key, child) in data.children {
-            entries.append(try serialize(child, codingPath: codingPath + [_CodingKey(stringValue: key) as CodingKey]))
+            try entries.append(serialize(child, codingPath: codingPath + [_CodingKey(stringValue: key) as CodingKey]))
         }
         return entries.joined(separator: String(splitVariablesOn))
     }
-    
+
     struct _CodingKey: CodingKey {
         var stringValue: String
-        
+
         init(stringValue: String) {
             self.stringValue = stringValue
         }
-        
+
         var intValue: Int?
-        
+
         init?(intValue: Int) {
             self.intValue = intValue
             self.stringValue = intValue.description
@@ -47,19 +47,19 @@ extension Array where Element == CodingKey {
         if count < 1 {
             return ""
         }
-        return try self[0].stringValue.urlEncoded(codingPath: self) + self[1...].map({ (key: CodingKey) -> String in
-            return try "[" + key.stringValue.urlEncoded(codingPath: self) + "]"
-        }).joined()
+        return try self[0].stringValue.urlEncoded(codingPath: self) + self[1...].map { (key: CodingKey) -> String in
+            try "[" + key.stringValue.urlEncoded(codingPath: self) + "]"
+        }.joined()
     }
 }
 
-// MARK: Utilties
+// MARK: Utilities
 
 extension String {
     /// Prepares a `String` for inclusion in form-urlencoded data.
     func urlEncoded(codingPath: [CodingKey] = []) throws -> String {
         guard let result = self.addingPercentEncoding(
-            withAllowedCharacters: _allowedCharacters
+            withAllowedCharacters: Characters.allowedCharacters
         ) else {
             throw EncodingError.invalidValue(self, EncodingError.Context(
                 codingPath: codingPath,
@@ -71,9 +71,11 @@ extension String {
 }
 
 /// Characters allowed in form-urlencoded data.
-private var _allowedCharacters: CharacterSet = {
-    var allowed = CharacterSet.urlQueryAllowed
-    // these symbols are reserved for url-encoded form
-    allowed.remove(charactersIn: "?&=[];+")
-    return allowed
-}()
+private enum Characters {
+    // https://url.spec.whatwg.org/#application-x-www-form-urlencoded-percent-encode-set
+    static let allowedCharacters: CharacterSet = {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "*-._")
+        return allowed
+    }()
+}

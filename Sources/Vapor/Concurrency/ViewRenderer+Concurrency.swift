@@ -1,7 +1,5 @@
-#if compiler(>=5.5) && canImport(_Concurrency)
 import NIOCore
 
-@available(macOS 12, iOS 15, watchOS 8, tvOS 15, *)
 public extension ViewRenderer {
     func render<E>(_ name: String, _ context: E) async throws -> View where E: Encodable {
         try await self.render(name, context).get()
@@ -12,14 +10,13 @@ public extension ViewRenderer {
     }
 }
 
-@available(macOS 12, iOS 15, watchOS 8, tvOS 15, *)
 extension View: AsyncResponseEncodable {
     public func encodeResponse(for request: Request) async throws -> Response {
         let response = Response()
-        response.headers.contentType = .html
-        response.body = .init(buffer: self.data)
+        response.responseBox.withLockedValue { box in
+            box.headers.contentType = .html
+            box.body = .init(buffer: self.data)
+        }
         return response
     }
 }
-
-#endif

@@ -1,11 +1,19 @@
+import NIOCore
+
 // TODO: Remove these deprecated methods along with ServerStartError in the major release.
-public protocol Server {
+public protocol Server: Sendable {
     var onShutdown: EventLoopFuture<Void> { get }
     
     /// Start the server with the specified address.
     /// - Parameters:
     ///   - address: The address to start the server with.
+    @available(*, noasync, message: "Use the async start() method instead.")
     func start(address: BindAddress?) throws
+    
+    /// Start the server with the specified address.
+    /// - Parameters:
+    ///   - address: The address to start the server with.
+    func start(address: BindAddress?) async throws
     
     /// Start the server with the specified hostname and port, if provided. If left blank, the server will be started with its default configuration.
     /// - Deprecated: Please use `start(address: .hostname(hostname, port: port))` instead.
@@ -15,10 +23,15 @@ public protocol Server {
     @available(*, deprecated, renamed: "start(address:)", message: "Please use `start(address: .hostname(hostname, port: port))` instead")
     func start(hostname: String?, port: Int?) throws
     
+    /// Shut the server down.
+    @available(*, noasync, message: "Use the async start() method instead.")
     func shutdown()
+    
+    /// Shut the server down.
+    func shutdown() async
 }
 
-public enum BindAddress: Equatable {
+public enum BindAddress: Equatable, Sendable {
     case hostname(_ hostname: String?, port: Int?)
     case unixDomainSocket(path: String)
 }
@@ -51,6 +64,27 @@ extension Server {
     @available(*, deprecated, renamed: "start(address:)", message: "Please use `start(address: .hostname(hostname, port: port))` instead")
     public func start(hostname: String?, port: Int?) throws {
         try self.start(address: .hostname(hostname, port: port))
+    }
+    
+    /// A default implementation for those servers that haven't migrated yet
+    @available(*, deprecated, message: "Implement an async version of this yourself")
+    public func start(address: BindAddress?) async throws {
+        try self.syncStart(address: address)
+    }
+        
+    /// A default implementation for those servers that haven't migrated yet
+    @available(*, deprecated, message: "Implement an async version of this yourself")
+    public func shutdown() async {
+        self.syncShutdown()
+    }
+    
+    // Trick the compiler
+    private func syncStart(address: BindAddress?) throws {
+        try self.start(address: address)
+    }
+    
+    private func syncShutdown() {
+        self.shutdown()
     }
 }
 

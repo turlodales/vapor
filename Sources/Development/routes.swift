@@ -1,4 +1,9 @@
+import class Foundation.Bundle
 import Vapor
+import NIOCore
+import NIOHTTP1
+import NIOConcurrencyHelpers
+import _NIOFileSystem
 
 struct Creds: Content {
     var email: String
@@ -15,21 +20,21 @@ public func routes(_ app: Application) throws {
     app.on(.POST, "slow-stream", body: .stream) { req -> EventLoopFuture<String> in
         let done = req.eventLoop.makePromise(of: String.self)
 
-        var total = 0
+        let totalBox = NIOLoopBoundBox(0, eventLoop: req.eventLoop)
         req.body.drain { result in
             let promise = req.eventLoop.makePromise(of: Void.self)
 
             switch result {
             case .buffer(let buffer):
                 req.eventLoop.scheduleTask(in: .milliseconds(1000)) {
-                    total += buffer.readableBytes
+                    totalBox.value += buffer.readableBytes
                     promise.succeed(())
                 }
             case .error(let error):
                 done.fail(error)
             case .end:
                 promise.succeed(())
-                done.succeed(total.description)
+                done.succeed(totalBox.value.description)
             }
 
             // manually return pre-completed future
@@ -106,7 +111,7 @@ public func routes(_ app: Application) throws {
         guard let key = req.parameters.get("key") else {
             throw Abort(.internalServerError)
         }
-        return "\(key) = \(cache.get(key) ?? "nil")"
+        return "\(key) = \(await cache.get(key) ?? "nil")"
     }
     app.get("cache", "set", ":key", ":value") { req -> String in
         guard let key = req.parameters.get("key") else {
@@ -115,7 +120,7 @@ public func routes(_ app: Application) throws {
         guard let value = req.parameters.get("value") else {
             throw Abort(.internalServerError)
         }
-        cache.set(key, to: value)
+        await cache.set(key, to: value)
         return "\(key) = \(value)"
     }
 
@@ -174,10 +179,11 @@ public func routes(_ app: Application) throws {
         throw TestError()
     }
 
-    app.get("secret") { (req) -> EventLoopFuture<String> in
-        return Environment
-            .secret(key: "PASSWORD_SECRET", fileIO: req.application.fileio, on: req.eventLoop)
-            .unwrap(or: Abort(.badRequest))
+    app.get("secret") { req in
+        guard let secret = try await Environment.secret(path: "PASSWORD_SECRET") else {
+            throw Abort(.badRequest)
+        }
+        return secret
     }
 
     app.on(.POST, "max-256", body: .collect(maxSize: 256)) { req -> HTTPStatus in
@@ -185,20 +191,24 @@ public func routes(_ app: Application) throws {
         return .ok
     }
 
-    app.on(.POST, "upload", body: .stream) { req -> EventLoopFuture<HTTPStatus> in
+    @available(*, deprecated, message: "Testing deprecated functions")
+    func deprecatedUploadHandler(_ req: Request) -> EventLoopFuture<HTTPStatus> {
         enum BodyStreamWritingToDiskError: Error {
             case streamFailure(Error)
             case fileHandleClosedFailure(Error)
             case multipleFailures([BodyStreamWritingToDiskError])
         }
+
         return req.application.fileio.openFile(
-            path: "/Users/tanner/Desktop/foo.txt",
+            path: Bundle.module.url(forResource: "Resources/fileio", withExtension: "txt")?.path ?? "",
             mode: .write,
             flags: .allowFileCreation(),
             eventLoop: req.eventLoop
         ).flatMap { fileHandle in
             let promise = req.eventLoop.makePromise(of: HTTPStatus.self)
+            let fileHandleBox = NIOLoopBound(fileHandle, eventLoop: req.eventLoop)
             req.body.drain { part in
+                let fileHandle = fileHandleBox.value
                 switch part {
                 case .buffer(let buffer):
                     return req.application.fileio.write(
@@ -230,59 +240,64 @@ public func routes(_ app: Application) throws {
             return promise.futureResult
         }
     }
-
-    #if compiler(>=5.5) && canImport(_Concurrency)
-    if #available(macOS 12, *) {
-        let asyncRoutes = app.grouped("async").grouped(TestAsyncMiddleware(number: 1))
-        asyncRoutes.get("client") { req async throws -> String in
-            let response = try await req.client.get("https://www.google.com")
-            guard let body = response.body else {
-                throw Abort(.internalServerError)
+    app.on(.POST, "upload", body: .stream) { req -> HTTPStatus in
+        return try await FileSystem.shared.withFileHandle(
+            forWritingAt: .init(Bundle.module.url(forResource: "Resources/fileio", withExtension: "txt")?.path ?? ""),
+            options: .newFile(replaceExisting: true)) { handle in
+                var writer = handle.bufferedWriter()
+                for try await part in req.body {
+                    try await writer.write(contentsOf: part)
+                }
+                return .ok
             }
-            return String(buffer: body)
-        }
+    }
 
-        func asyncRouteTester(_ req: Request) async throws -> String {
-            let response = try await req.client.get("https://www.google.com")
-            guard let body = response.body else {
-                throw Abort(.internalServerError)
-            }
-            return String(buffer: body)
+    let asyncRoutes = app.grouped("async").grouped(TestAsyncMiddleware(number: 1))
+    asyncRoutes.get("client") { req async throws -> String in
+        let response = try await req.client.get("https://www.google.com")
+        guard let body = response.body else {
+            throw Abort(.internalServerError)
         }
-        asyncRoutes.get("client2", use: asyncRouteTester)
-        
-        asyncRoutes.get("content", use: asyncContentTester)
-        
-        func asyncContentTester(_ req: Request) async throws -> Creds {
-            return Creds(email: "name", password: "password")
+        return String(buffer: body)
+    }
+
+    asyncRoutes.get("client2") { req -> String in
+        let response = try await req.client.get("https://www.google.com")
+        guard let body = response.body else {
+            throw Abort(.internalServerError)
         }
-        
-        asyncRoutes.get("content2") { req async throws -> Creds in
-            return Creds(email: "name", password: "password")
-        }
-        
-        asyncRoutes.get("contentArray") { req async throws -> [Creds] in
-            let cred1 = Creds(email: "name", password: "password")
-            return [cred1]
-        }
-        
-        func opaqueRouteTester(_ req: Request) async throws -> some AsyncResponseEncodable {
-            "Hello World"
-        }
-        asyncRoutes.get("opaque", use: opaqueRouteTester)
-        
-        // Make sure jumping between multiple different types of middleware works
-        asyncRoutes.grouped(TestAsyncMiddleware(number: 2), TestMiddleware(number: 3), TestAsyncMiddleware(number: 4), TestMiddleware(number: 5)).get("middleware") { req async throws -> String in
-            return "OK"
-        }
-        
-        let basicAuthRoutes = asyncRoutes.grouped(Test.authenticator(), Test.guardMiddleware())
-        basicAuthRoutes.get("auth") { req async throws -> String in
-            return try req.auth.require(Test.self).name
-        }
+        return String(buffer: body)
     }
     
-    @available(macOS 12, iOS 15, watchOS 8, tvOS 15, *)
+    asyncRoutes.get("content") { req in
+        Creds(email: "name", password: "password")
+    }
+    
+    asyncRoutes.get("content2") { req async throws -> Creds in
+        return Creds(email: "name", password: "password")
+    }
+    
+    asyncRoutes.get("contentArray") { req async throws -> [Creds] in
+        let cred1 = Creds(email: "name", password: "password")
+        return [cred1]
+    }
+    
+    @Sendable
+    func opaqueRouteTester(_ req: Request) async throws -> some AsyncResponseEncodable {
+        "Hello World"
+    }
+    asyncRoutes.get("opaque", use: opaqueRouteTester)
+    
+    // Make sure jumping between multiple different types of middleware works
+    asyncRoutes.grouped(TestAsyncMiddleware(number: 2), TestMiddleware(number: 3), TestAsyncMiddleware(number: 4), TestMiddleware(number: 5)).get("middleware") { req async throws -> String in
+        return "OK"
+    }
+    
+    let basicAuthRoutes = asyncRoutes.grouped(Test.authenticator(), Test.guardMiddleware())
+    basicAuthRoutes.get("auth") { req async throws -> String in
+        return try req.auth.require(Test.self).name
+    }
+    
     struct Test: Authenticatable {
         static func authenticator() -> AsyncAuthenticator {
             TestAuthenticator()
@@ -291,7 +306,6 @@ public func routes(_ app: Application) throws {
         var name: String
     }
 
-    @available(macOS 12, iOS 15, watchOS 8, tvOS 15, *)
     struct TestAuthenticator: AsyncBasicAuthenticator {
         typealias User = Test
 
@@ -302,7 +316,6 @@ public func routes(_ app: Application) throws {
             }
         }
     }
-    #endif
 }
 
 struct TestError: AbortError, DebuggableError {
@@ -315,15 +328,13 @@ struct TestError: AbortError, DebuggableError {
     }
 
     var source: ErrorSource?
-    var stackTrace: StackTrace?
 
     init(
-        file: String = #file,
+        file: String = #fileID,
         function: String = #function,
         line: UInt = #line,
         column: UInt = #column,
-        range: Range<UInt>? = nil,
-        stackTrace: StackTrace? = .capture(skip: 1)
+        range: Range<UInt>? = nil
     ) {
         self.source = .init(
             file: file,
@@ -332,12 +343,9 @@ struct TestError: AbortError, DebuggableError {
             column: column,
             range: range
         )
-        self.stackTrace = stackTrace
     }
 }
 
-#if compiler(>=5.5) && canImport(_Concurrency)
-@available(macOS 12, iOS 15, watchOS 8, tvOS 15, *)
 struct TestAsyncMiddleware: AsyncMiddleware {
     let number: Int
     
@@ -348,7 +356,6 @@ struct TestAsyncMiddleware: AsyncMiddleware {
         return response
     }
 }
-#endif
 
 struct TestMiddleware: Middleware {
     let number: Int

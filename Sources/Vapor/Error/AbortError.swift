@@ -1,3 +1,5 @@
+import NIOHTTP1
+
 /// Errors conforming to this protocol will always be displayed by
 /// Vapor to the end-user (even in production mode where most errors are silenced).
 ///
@@ -66,21 +68,36 @@ extension DecodingError: AbortError {
     /// See `AbortError.reason`
     public var reason: String {
         switch self {
-        case .dataCorrupted(let ctx):
-            return "\(ctx.debugDescription) for key \(ctx.codingPath.dotPath)"
-        case .keyNotFound(let key, let ctx):
-            let path: String
-            if ctx.codingPath.count > 0 {
-                path = ctx.codingPath.dotPath + "." + key.stringValue
-            } else {
-                path = key.stringValue
-            }
-            return "Value required for key '\(path)'."
-        case .typeMismatch(let type, let ctx):
-            return "Value of type '\(type)' required for key '\(ctx.codingPath.dotPath)'."
-        case .valueNotFound(let type, let ctx):
-            return "Value of type '\(type)' required for key '\(ctx.codingPath.dotPath)'."
-        @unknown default: return "Unknown error."
+        case let .dataCorrupted(ctx):       return "Data corrupted \(self.contextReason(ctx))"
+        case let .keyNotFound(key, ctx):    return "No such key '\(key.stringValue)' \(self.contextReason(ctx))"
+        case let .typeMismatch(type, ctx):  return "Value was not of type '\(type)' \(self.contextReason(ctx))"
+        case let .valueNotFound(type, ctx): return "No value found (expected type '\(type)') \(self.contextReason(ctx))"
+        @unknown default:                   return "Unknown error"
         }
+    }
+    
+    private func contextReason(_ context: Context) -> String {
+        "at path '\(context.codingPath.dotPath)'\(context.debugDescriptionAndUnderlyingError)"
+    }
+}
+
+private extension DecodingError.Context {
+    var debugDescriptionAndUnderlyingError: String {
+        "\(self.debugDescriptionNoTrailingDot)\(self.underlyingErrorDescription)."
+    }
+    
+    /// `debugDescription` sometimes has a trailing dot, and sometimes not.
+    private var debugDescriptionNoTrailingDot: String {
+        if self.debugDescription.isEmpty {
+            return ""
+        } else if self.debugDescription.last == "." {
+            return ". \(self.debugDescription.dropLast())"
+        } else {
+            return ". \(self.debugDescription)"
+        }
+    }
+    
+    private var underlyingErrorDescription: String {
+        self.underlyingError.map { ". Underlying error: \(String(describing: $0))" } ?? ""
     }
 }

@@ -1,5 +1,6 @@
-import Vapor
 import XCTest
+import Vapor
+import NIOCore
 
 class ValidationTests: XCTestCase {
     func testValidate() throws {
@@ -52,6 +53,19 @@ class ValidationTests: XCTestCase {
                 // validate the email is valid or is nil
                 v.add("email", as: String?.self, is: .nil || .email)
                 v.add("email", as: String?.self, is: .email || .nil) // test other way
+                v.add(
+                    "email",
+                    as: String?.self,
+                    is: .custom(
+                        "Validates whether email domain is 'tanner.xyz'."
+                    ) { email in
+                        if let email {
+                            let parts = email.split(separator: "@")
+                            return parts[parts.count - 1] == "tanner.xyz"
+                        }
+                        return true
+                    }
+                )
                 // validate that the lucky number is nil or is 5 or 7
                 v.add("luckyNumber", as: Int?.self, is: .nil || .in(5, 7))
                 // validate that the profile picture is nil or a valid URL
@@ -160,10 +174,12 @@ class ValidationTests: XCTestCase {
         """
         XCTAssertNoThrow(try Email.validate(json: valid))
         
-        let validURL: URI = "https://tanner.xyz/email?email=ß@tanner.xyz"
+        // N.B.: These two checks previously asserted against a URI containing the unencoded `ß` character.
+        // Such a URI is semantically incorrect (per RFC 3986) and should have been considered a bug.
+        let validURL: URI = "https://tanner.xyz/email?email=%C3%9F@tanner.xyz" // ß
         XCTAssertNoThrow(try Email.validate(query: validURL))
         
-        let validURL2: URI = "https://tanner.xyz/email?email=me@ßanner.xyz"
+        let validURL2: URI = "https://tanner.xyz/email?email=me@%C3%9Fanner.xyz"
         XCTAssertNoThrow(try Email.validate(query: validURL2))
         
         let invalidUser = """
@@ -464,7 +480,9 @@ class ValidationTests: XCTestCase {
 
     func testEmail() {
         assert("tanner@vapor.codes", passes: .email)
+        assert("tanner@VAPOR.codes", passes: .email)
         assert("tanner@vapor.codes", fails: !.email, "is a valid email address")
+        assert("tanner@VAPOR.codes", fails: !.email, "is a valid email address")
         assert("tanner@vapor.codestanner@vapor.codes", fails: .email, "is not a valid email address")
         assert("tanner@vapor.codes.", fails: .email, "is not a valid email address")
         assert("tanner@@vapor.codes", fails: .email, "is not a valid email address")
@@ -500,6 +518,7 @@ class ValidationTests: XCTestCase {
         assert(-6, fails: .range(-5..<6), "is less than minimum of -5")
         assert(6, fails: .range(-5..<6), "is greater than maximum of 5")
         assert(6, passes: !.range(-5..<6))
+        assert(Float.nan, passes: !.range(-5..<6))
     }
 
     func testCountCharacters() {
@@ -598,7 +617,7 @@ class ValidationTests: XCTestCase {
         assert("CASE2", fails: .case(of: SingleCaseEnum.self), "is not CASE1")
     }
 
-    func testCustomResponseMiddleware() throws {
+    func testCustomResponseMiddleware() async throws {
         // Test item
         struct User: Validatable {
             let name: String
@@ -613,8 +632,7 @@ class ValidationTests: XCTestCase {
         }
 
         // Setup
-        let app = Application(.testing)
-        defer { app.shutdown() }
+        let app = try await Application.make(.testing)
 
         // Converts validation errors to a custom response.
         final class ValidationErrorMiddleware: Middleware {
@@ -676,7 +694,7 @@ class ValidationTests: XCTestCase {
         }
 
         // Test that the custom validation error middleware is working.
-        try app.test(.POST, "users", beforeRequest: { req in
+        try await app.test(.POST, "users", beforeRequest: { req async throws in
             try req.content.encode([
                 "name": "Vapor",
                 "age": "asdf"
@@ -686,6 +704,8 @@ class ValidationTests: XCTestCase {
             let content = try res.content.decode(ValidationErrorMiddleware.ErrorResponse.self)
             XCTAssertEqual(content.errors.count, 1)
         })
+
+        try await app.asyncShutdown()
     }
 
     func testValidateNullWhenNotRequired() throws {
@@ -774,6 +794,40 @@ class ValidationTests: XCTestCase {
         }
     }
     
+
+    func testCustomValidator() {
+        let value = "test123"
+        let validationDescription = "test \'\(value)'"
+
+        // These tests are used to make sure that the custom validator pass and fail correctly.
+        assert(
+            value,
+            fails: !.custom(validationDescription) { x in
+                return x == value
+            },
+            "is successfully validated for custom validation '\(validationDescription)'."
+        )
+        assert(
+            value,
+            passes: !.custom(validationDescription) { x in
+                return x != value
+            }
+        )
+        assert(
+            value,
+            fails: .custom(validationDescription) { x in
+                return x != value
+            },
+            "is not successfully validated for custom validation '\(validationDescription)'."
+        )
+        assert(
+            value,
+            passes: .custom(validationDescription) { x in
+                return x == value
+            }
+        )
+    }
+
     func testCustomFailureDescriptions() throws {
         struct User: Validatable {
             var name: String
@@ -842,10 +896,9 @@ private func assert<T>(
     _ data: T,
     fails validator: Validator<T>,
     _ description: String,
-    file: StaticString = #file,
+    file: StaticString = #filePath,
     line: UInt = #line
 ) {
-    let file = (file)
     let result = validator.validate(data)
     XCTAssert(result.isFailure, result.successDescription ?? "n/a", file: file, line: line)
     XCTAssertEqual(description, result.failureDescription ?? "n/a", file: file, line: line)
@@ -854,10 +907,9 @@ private func assert<T>(
 private func assert<T>(
     _ data: T,
     passes validator: Validator<T>,
-    file: StaticString = #file,
+    file: StaticString = #filePath,
     line: UInt = #line
 ) {
-    let file = (file)
     let result = validator.validate(data)
     XCTAssert(!result.isFailure, result.failureDescription ?? "n/a", file: file, line: line)
 }

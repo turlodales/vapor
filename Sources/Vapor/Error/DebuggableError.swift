@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 
 /// `Debuggable` provides an interface that allows a type
 /// to be more easily debugged in the case of an error.
@@ -28,6 +29,7 @@ public protocol DebuggableError: LocalizedError, CustomDebugStringConvertible, C
     var source: ErrorSource? { get }
 
     /// Stack trace from which this error originated (must set this from the error's init)
+    @available(*, deprecated, message: "Captured stack traces are no longer supported by Vapor")
     var stackTrace: StackTrace? { get }
 
     /// A `String` array describing the possible causes of the error.
@@ -56,7 +58,7 @@ public protocol DebuggableError: LocalizedError, CustomDebugStringConvertible, C
     var gitHubIssues: [String] { get }
 
     /// Which log level this error should report as. 
-    /// Defaults to `.error`.
+    /// Defaults to `.warning`.
     var logLevel: Logger.Level { get }
 }
 
@@ -101,6 +103,7 @@ extension DebuggableError {
         nil
     }
 
+    @available(*, deprecated, message: "Captured stack traces are no longer supported by Vapor")
     public var stackTrace: StackTrace? {
         nil
     }
@@ -186,9 +189,6 @@ extension DebuggableError {
 
             if !self.gitHubIssues.isEmpty {
                 print.append("See these GitHub issues for discussion on this topic:\(self.gitHubIssues.bulletedList)")
-            }
-            if let stackTrace = self.stackTrace {
-                print.append("Stack trace:\n\(stackTrace)")
             }
         case .short:
             if self.possibleCauses.count > 0 {
